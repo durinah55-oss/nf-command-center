@@ -7,7 +7,7 @@
  *
  * Fungsi: jembatan aman antara web app (React) dan Google Sheet.
  *   - Baca: tasks, kpi, reports, stock, users, mp/reseller (sheet Resi)
- *   - Tulis: centang task, simpan poin
+ *   - Tulis: centang task, simpan poin, edit PIC/catatan MP (sheet Resi)
  *   - Login & role dijaga DI SINI (bukan di frontend)
  *
  * Struktur Sheet yang dibutuhkan (lihat panduan_setup.md):
@@ -22,7 +22,7 @@
 
 // Token sederhana supaya tidak sembarang orang panggil API ini.
 // Ganti dengan teks acak panjang milikmu sendiri.
-const API_TOKEN = "GANTI_DENGAN_TOKEN_RAHASIA_PANJANG_123";
+const API_TOKEN = "nf-7f3a9k2p-rumah-nf3";
 
 // Daftar hak akses per role (sama seperti versi demo, tapi sekarang di server)
 const ROLES = {
@@ -35,7 +35,7 @@ const ROLES = {
 };
 
 /* ===========
-   MP & RESELLER — sheet Resi terpisah (Tahap 1: baca saja)
+   MP & RESELLER — sheet Resi terpisah (Tahap 3: baca + edit PIC/catatan)
    =========== */
 const RESI_SHEET_ID = "13dxQv1rnoIKbdgNoKpFQ9YsIPNICvkc8aWcuqnDkLgQ";
 const RESI_MONTHS = ["Januari","Februar","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
@@ -77,15 +77,32 @@ function parseHarga_(v) {
   return Number(String(v).replace(/[^0-9.-]/g, "")) || 0;
 }
 
+function getResiColMap_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 18);
+  const heads = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) {
+    return String(h).trim().toUpperCase();
+  });
+  function idx(name, fallback) {
+    const i = heads.indexOf(name.toUpperCase());
+    return i >= 0 ? i : fallback;
+  }
+  return {
+    invoice: idx("INVOICE", 2),
+    pic: idx("PIC", 15),
+    catatan: idx("CATATAN", 17),
+  };
+}
+
 function readResiOrders_(tabName) {
   const ss = SpreadsheetApp.openById(RESI_SHEET_ID);
   const sh = ss.getSheetByName(tabName);
   if (!sh) return { orders: [], missing: true };
+  const cols = getResiColMap_(sh);
   const data = sh.getDataRange().getValues();
   const orders = [];
   for (let r = 1; r < data.length; r++) {
     const row = data[r];
-    const invoice = String(row[2] || "").trim();
+    const invoice = String(row[cols.invoice] || "").trim();
     const nama = String(row[3] || "").trim();
     if (!invoice && !nama) continue;
     orders.push({
@@ -100,10 +117,51 @@ function readResiOrders_(tabName) {
       barang: String(row[10] || ""),
       lokasi: String(row[11] || ""),
       harga: parseHarga_(row[12]),
-      pic: String(row[15] || ""),
+      pic: String(row[cols.pic] || ""),
+      catatan: String(row[cols.catatan] || ""),
     });
   }
   return { orders: orders, missing: false };
+}
+
+function updateMpOrder_(body) {
+  if (!mpAllowed_(body.role)) return { ok: false, error: "Tidak punya akses MP/Reseller." };
+  const channel = String(body.channel || "");
+  if (channel !== "mp" && channel !== "reseller") {
+    return { ok: false, error: "Channel harus mp atau reseller." };
+  }
+  const invoice = String(body.invoice || "").trim();
+  if (!invoice) return { ok: false, error: "Invoice wajib diisi." };
+  const hasPic = body.pic !== undefined && body.pic !== null;
+  const hasCatatan = body.catatan !== undefined && body.catatan !== null;
+  if (!hasPic && !hasCatatan) return { ok: false, error: "Isi PIC atau catatan untuk disimpan." };
+
+  const tabs = getResiTabNames();
+  const tabName = channel === "mp" ? tabs.mp : tabs.reseller;
+  const ss = SpreadsheetApp.openById(RESI_SHEET_ID);
+  const sh = ss.getSheetByName(tabName);
+  if (!sh) return { ok: false, error: "Tab tidak ditemukan: " + tabName };
+
+  const cols = getResiColMap_(sh);
+  const data = sh.getDataRange().getValues();
+  for (let r = 1; r < data.length; r++) {
+    if (String(data[r][cols.invoice] || "").trim() !== invoice) continue;
+    if (hasPic) sh.getRange(r + 1, cols.pic + 1).setValue(String(body.pic));
+    if (hasCatatan) {
+      if (String(sh.getRange(1, cols.catatan + 1).getValue()).trim() === "") {
+        sh.getRange(1, cols.catatan + 1).setValue("CATATAN");
+      }
+      sh.getRange(r + 1, cols.catatan + 1).setValue(String(body.catatan));
+    }
+    return {
+      ok: true,
+      invoice: invoice,
+      channel: channel,
+      pic: hasPic ? String(body.pic) : undefined,
+      catatan: hasCatatan ? String(body.catatan) : undefined,
+    };
+  }
+  return { ok: false, error: "Invoice tidak ditemukan di tab " + tabName };
 }
 
 function buildMpSummary_(role) {
@@ -275,6 +333,10 @@ function doPost(e) {
         }
       }
       return json({ ok: false, error: "Task tidak ditemukan" });
+    }
+
+    if (body.action === "mp_update") {
+      return json(updateMpOrder_(body));
     }
 
     return json({ ok: false, error: "Action tidak dikenal" });

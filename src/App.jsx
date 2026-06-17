@@ -89,6 +89,9 @@ const api = {
     const r = await apiGet({ action: "mp_list", role: SESSION.role, channel });
     return r.ok ? r : { orders: [], summary: null, warnings: [r.error || "Gagal memuat"] };
   },
+  async mpUpdate({ channel, invoice, pic, catatan }) {
+    return apiPost({ action: "mp_update", role: SESSION.role, channel, invoice, pic, catatan });
+  },
 };
 
 /* ============================================================
@@ -544,6 +547,11 @@ function MpResellerView({ lihatUang }) {
   const [channel, setChannel] = useState("all");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [editOrder, setEditOrder] = useState(null);
+  const [editPic, setEditPic] = useState("");
+  const [editCatatan, setEditCatatan] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
     const r = await api.getMpList(channel);
@@ -551,6 +559,32 @@ function MpResellerView({ lihatUang }) {
     setLoading(false);
   }, [channel]);
   useEffect(() => { load(); }, [load]);
+
+  const openEdit = (o) => {
+    setEditOrder(o);
+    setEditPic(o.pic || "");
+    setEditCatatan(o.catatan || "");
+    setSaveErr("");
+  };
+  const closeEdit = () => { if (!saving) setEditOrder(null); };
+  const saveEdit = async () => {
+    if (!editOrder) return;
+    setSaving(true);
+    setSaveErr("");
+    const r = await api.mpUpdate({
+      channel: editOrder.channel,
+      invoice: editOrder.invoice,
+      pic: editPic,
+      catatan: editCatatan,
+    });
+    setSaving(false);
+    if (r.ok) {
+      setEditOrder(null);
+      load();
+    } else {
+      setSaveErr(r.error || "Gagal menyimpan.");
+    }
+  };
 
   const fmtRp = (n) => n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID");
   const summary = data?.summary;
@@ -562,8 +596,9 @@ function MpResellerView({ lihatUang }) {
   ];
 
   return (
+    <>
     <Panel>
-      <SectionTitle>🛒 MP & Reseller — Sheet Resi (baca live)</SectionTitle>
+      <SectionTitle>🛒 MP & Reseller — Sheet Resi</SectionTitle>
       {summary && (
         <div style={{ marginTop: 10, fontSize: 12, color: C.wood }}>
           Tab aktif: <b>{summary.tabs?.mp}</b> · <b>{summary.tabs?.reseller}</b>
@@ -605,24 +640,57 @@ function MpResellerView({ lihatUang }) {
             <div key={`${o.channel}-${o.invoice}-${i}`} style={{ padding: "11px 13px", borderRadius: 11, background: "#fff", border: `2px solid ${C.parchmentEdge}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ fontWeight: 800, fontSize: 13.5 }}>{o.nama || "—"}</div>
-                <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: o.channel === "reseller" ? C.grassDeep : "#cf7a2c", padding: "3px 8px", borderRadius: 6 }}>
-                  {o.channel === "reseller" ? "Reseller" : "MP"}
-                </span>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: o.channel === "reseller" ? C.grassDeep : "#cf7a2c", padding: "3px 8px", borderRadius: 6 }}>
+                    {o.channel === "reseller" ? "Reseller" : "MP"}
+                  </span>
+                  <button onClick={() => openEdit(o)} style={{ padding: "4px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 800, border: `2px solid ${C.nfBlueLite}`, background: "#fff", color: C.nfBlueLite }}>
+                    Edit PIC / Catat
+                  </button>
+                </div>
               </div>
               <div style={{ fontSize: 11.5, color: C.wood, marginTop: 5, lineHeight: 1.5 }}>
                 <div><b>Tanggal:</b> {o.tanggal || "—"} · <b>Invoice:</b> {o.invoice || "—"}</div>
                 <div><b>Resi:</b> {o.noResi || "—"} · <b>Kota:</b> {o.kota || "—"} · <b>Lokasi:</b> {o.lokasi || "—"}</div>
                 <div><b>Barang:</b> {o.barang || "—"} ({o.jumlah || "—"}) · <b>PIC:</b> {o.pic || "—"}</div>
+                {o.catatan && <div style={{ marginTop: 4, padding: "6px 8px", borderRadius: 8, background: "rgba(217,165,40,.12)", border: `1px solid ${C.gold}` }}><b>Catatan:</b> {o.catatan}</div>}
                 {lihatUang && o.harga != null && <div style={{ fontWeight: 800, color: C.goldDeep, marginTop: 3 }}>{fmtRp(o.harga)}</div>}
               </div>
             </div>
           ))}
         </div>
       )}
-      <div style={{ marginTop: 12, fontSize: 11.5, color: C.wood, fontStyle: "italic" }}>
-        Tahap 1–2: baca live dari Sheet Resi. Edit & catat → Tahap 3.
+      <div style={{ marginTop: 12, fontSize: 11.5, color: C.wood }}>
+        Perubahan PIC & catatan langsung tersimpan ke Sheet Resi (kolom <b>PIC</b> & <b>CATATAN</b>).
       </div>
     </Panel>
+    {editOrder && (
+      <div onClick={closeEdit} style={{ position: "fixed", inset: 0, background: "rgba(31,42,36,.6)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
+        <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 420 }}>
+          <Panel pad={20} style={{ borderColor: "#cf7a2c" }}>
+            <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 4 }}>Edit order</div>
+            <div style={{ fontSize: 12, color: C.wood, marginBottom: 14 }}>
+              {editOrder.nama} · {editOrder.invoice} · {editOrder.channel === "reseller" ? "Reseller" : "MP"}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.wood }}>PIC</label>
+              <Field icon={<User size={16} color={C.wood} />} value={editPic} onChange={setEditPic} placeholder="Nama PIC" onEnter={saveEdit} />
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.wood }}>Catatan</label>
+              <textarea value={editCatatan} onChange={e => setEditCatatan(e.target.value)} placeholder="Catatan internal tim MP..."
+                style={{ width: "100%", minHeight: 80, padding: 12, borderRadius: 11, border: `2px solid ${C.parchmentEdge}`, fontFamily: FONT, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+            {saveErr && <div style={{ color: C.chili, fontSize: 12.5, marginTop: 10 }}>{saveErr}</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={closeEdit} disabled={saving} style={{ flex: 1, padding: 11, borderRadius: 11, cursor: "pointer", background: "#fff", border: `2px solid ${C.wood}`, fontWeight: 700 }}>Batal</button>
+              <button onClick={saveEdit} disabled={saving} style={{ flex: 1, padding: 11, borderRadius: 11, cursor: saving ? "wait" : "pointer", background: C.nfBlue, color: "#fff", border: "none", fontWeight: 800 }}>
+                {saving ? "Menyimpan..." : "Simpan ke Sheet"}
+              </button>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
