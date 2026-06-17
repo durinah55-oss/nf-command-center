@@ -61,6 +61,17 @@ function formatResiDate_(v) {
   return String(v || "");
 }
 
+function normalizeResiDate_(s) {
+  const parts = String(s).trim().split("/");
+  if (parts.length !== 3) return String(s).trim();
+  const yy = parts[2].length === 4 ? String(parts[2]).slice(-2) : parts[2];
+  return ("0" + parts[0]).slice(-2) + "/" + ("0" + parts[1]).slice(-2) + "/" + yy;
+}
+
+function todayResi_() {
+  return normalizeResiDate_(formatResiDate_(new Date()));
+}
+
 function parseHarga_(v) {
   if (typeof v === "number" && !isNaN(v)) return v;
   return Number(String(v).replace(/[^0-9.-]/g, "")) || 0;
@@ -93,6 +104,36 @@ function readResiOrders_(tabName) {
     });
   }
   return { orders: orders, missing: false };
+}
+
+function buildMpSummary_(role) {
+  if (!mpAllowed_(role)) return null;
+  const izin = ROLES[role] || ROLES.cs;
+  const tabs = getResiTabNames();
+  const warnings = [];
+  const mpR = readResiOrders_(tabs.mp);
+  const reR = readResiOrders_(tabs.reseller);
+  if (mpR.missing) warnings.push("Tab tidak ditemukan: " + tabs.mp);
+  if (reR.missing) warnings.push("Tab tidak ditemukan: " + tabs.reseller);
+  const mpOrders = mpR.orders || [];
+  const reOrders = reR.orders || [];
+  const today = todayResi_();
+  const hariIni = mpOrders.filter(function(o) { return normalizeResiDate_(o.tanggal) === today; }).length
+    + reOrders.filter(function(o) { return normalizeResiDate_(o.tanggal) === today; }).length;
+  const omzetMp = mpOrders.reduce(function(s, o) { return s + o.harga; }, 0);
+  const omzetReseller = reOrders.reduce(function(s, o) { return s + o.harga; }, 0);
+  const summary = {
+    tabs: tabs,
+    total: mpOrders.length + reOrders.length,
+    countMp: mpOrders.length,
+    countReseller: reOrders.length,
+    hariIni: hariIni,
+    omzetMp: izin.lihatUang ? omzetMp : null,
+    omzetReseller: izin.lihatUang ? omzetReseller : null,
+    omzetTotal: izin.lihatUang ? omzetMp + omzetReseller : null,
+  };
+  if (warnings.length) summary.warnings = warnings;
+  return summary;
 }
 
 // ---------- Util baca tab jadi array objek ----------
@@ -144,7 +185,8 @@ function doGet(e) {
       }));
       // Penjagaan: baris uang hanya untuk role yang boleh
       if (!izin.lihatUang) kpi = kpi.filter(k => !k.uang);
-      return json({ ok: true, kpi });
+      const mpSummary = buildMpSummary_(role);
+      return json({ ok: true, kpi, mpSummary });
     }
 
     if (action === "tasks") {
@@ -191,20 +233,17 @@ function doGet(e) {
         else orders = orders.concat(r.orders.map(o => ({ ...o, channel: "reseller" })));
       }
 
-      const countMp = orders.filter(o => o.channel === "mp").length;
-      const countReseller = orders.filter(o => o.channel === "reseller").length;
-      let summary = {
-        tabs: tabs,
-        countMp: countMp,
-        countReseller: countReseller,
-        total: orders.length,
-        omzetMp: orders.filter(o => o.channel === "mp").reduce((s, o) => s + o.harga, 0),
-        omzetReseller: orders.filter(o => o.channel === "reseller").reduce((s, o) => s + o.harga, 0),
+      const summary = buildMpSummary_(role) || {
+        tabs: tabs, total: orders.length, countMp: 0, countReseller: 0, hariIni: 0,
+        omzetMp: null, omzetReseller: null, omzetTotal: null,
       };
+      summary.total = orders.length;
+      summary.countMp = orders.filter(o => o.channel === "mp").length;
+      summary.countReseller = orders.filter(o => o.channel === "reseller").length;
+      if (warnings.length) summary.warnings = warnings;
 
       if (!izin.lihatUang) {
         orders = orders.map(o => ({ ...o, harga: null }));
-        summary = { ...summary, omzetMp: null, omzetReseller: null };
       }
 
       return json({ ok: true, orders, summary, warnings });

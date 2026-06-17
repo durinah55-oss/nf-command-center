@@ -68,7 +68,7 @@ const api = {
 
   async getDashboard() {
     const r = await apiGet({ action: "dashboard", role: SESSION.role });
-    return { kpi: r.ok ? r.kpi : [], divisions: DIVISIONS };
+    return { kpi: r.ok ? r.kpi : [], mpSummary: r.ok ? r.mpSummary : null };
   },
   async getTasks() {
     const r = await apiGet({ action: "tasks" });
@@ -247,6 +247,7 @@ function Shell({ user, onLogout }) {
   const [tasks, setTasks] = useState([]);
   const [poinDasar, setPoinDasar] = useState(0);
   const [kpi, setKpi] = useState([]);
+  const [mpSummary, setMpSummary] = useState(null);
   const [stock, setStock] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDiv, setOpenDiv] = useState(null);
@@ -255,7 +256,7 @@ function Shell({ user, onLogout }) {
   const loadAll = useCallback(async () => {
     setLoading(true);
     const [d, t, s] = await Promise.all([api.getDashboard(), api.getTasks(), api.getStock()]);
-    setKpi(d.kpi); setTasks(t.tasks); setPoinDasar(t.poinDasar); setStock(s);
+    setKpi(d.kpi); setMpSummary(d.mpSummary); setTasks(t.tasks); setPoinDasar(t.poinDasar); setStock(s);
     setLoading(false);
   }, []);
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -315,7 +316,7 @@ function Shell({ user, onLogout }) {
         </nav>
 
         {/* Konten */}
-        {page === "dashboard" && <Dashboard role={user.role} stock={stock} kpi={kpi} loading={loading} tasks={tasks} toggle={toggle} savingId={savingId} dailyTarget={dailyTarget} earned={earned} setOpenDiv={setOpenDiv} setPage={setPage} canTask={user.izin.menu.includes("task")} />}
+        {page === "dashboard" && <Dashboard role={user.role} stock={stock} kpi={kpi} mpSummary={mpSummary} loading={loading} tasks={tasks} toggle={toggle} savingId={savingId} dailyTarget={dailyTarget} earned={earned} setOpenDiv={setOpenDiv} setPage={setPage} canTask={user.izin.menu.includes("task")} canMp={user.izin.menu.includes("mp")} lihatUang={user.izin.lihatUang} />}
         {page === "task" && <TaskCenter tasks={tasks} toggle={toggle} savingId={savingId} earned={earned} loading={loading} />}
         {page === "cs" && <ReportView divisi="cs" title="Laporan CS" accent="#3b6ea5" />}
         {page === "ads" && <ReportView divisi="ads" title="Laporan Iklan" accent="#8e5bb5" />}
@@ -347,8 +348,21 @@ function Stat({ icon, top, bottom, accent }) {
   );
 }
 
-function Dashboard({ role, stock, kpi, loading, tasks, toggle, savingId, dailyTarget, earned, setOpenDiv, setPage, canTask }) {
+function Dashboard({ role, stock, kpi, mpSummary, loading, tasks, toggle, savingId, dailyTarget, earned, setOpenDiv, setPage, canTask, canMp, lihatUang }) {
   const linkBtn = { display: "flex", alignItems: "center", gap: 2, cursor: "pointer", background: "none", border: "none", color: C.nfBlueLite, fontWeight: 700, fontSize: 12 };
+  const fmtRp = (n) => n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID");
+  const divs = DIVISIONS.map(d => (
+    d.id === "marketplace" && mpSummary
+      ? { ...d, metric: String(mpSummary.hariIni), label: "Pesanan hari ini (Resi)" }
+      : d
+  ));
+  const mpCards = mpSummary ? [
+    { id: "mp_hari", label: "MP Hari Ini", value: String(mpSummary.hariIni), delta: "Sheet Resi", up: true, icon: "box", accent: "#cf7a2c" },
+    { id: "mp_bulan", label: "Total Bulan Ini", value: String(mpSummary.total), delta: `${mpSummary.countMp} MP · ${mpSummary.countReseller} RS`, up: true, icon: "users", accent: C.nfBlueLite },
+    ...(lihatUang && mpSummary.omzetTotal != null ? [
+      { id: "mp_omzet", label: "Omzet MP+RS", value: fmtRp(mpSummary.omzetTotal), delta: fmtRp(mpSummary.omzetMp) + " MP", up: true, icon: "coins", accent: C.goldDeep, uang: true },
+    ] : []),
+  ] : [];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.15fr) minmax(0,.85fr)", gap: 16 }} className="nf-grid">
       <style>{`@media(max-width:880px){.nf-grid{grid-template-columns:1fr!important}.nf-divgrid{grid-template-columns:1fr 1fr!important}}`}</style>
@@ -381,10 +395,40 @@ function Dashboard({ role, stock, kpi, loading, tasks, toggle, savingId, dailyTa
           </div>
         )}
 
+        {!loading && mpSummary && (
+          <Panel style={{ borderColor: "#cf7a2c" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <SectionTitle>🛒 MP & Reseller — live Sheet Resi</SectionTitle>
+              {canMp && <button onClick={() => setPage("mp")} style={linkBtn}>Detail order <ChevronRight size={13} /></button>}
+            </div>
+            <div style={{ fontSize: 11.5, color: C.wood, marginTop: 4 }}>
+              Tab: <b>{mpSummary.tabs?.mp}</b> · <b>{mpSummary.tabs?.reseller}</b>
+            </div>
+            {mpSummary.warnings?.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: C.chili }}>{mpSummary.warnings.join(" · ")}</div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginTop: 12 }}>
+              {mpCards.map(k => {
+                const Icon = ICONMAP[k.icon] || ShoppingCart;
+                return (
+                  <div key={k.id} style={{ padding: 12, borderRadius: 12, background: "#fff", border: `2px solid ${k.accent || C.wood}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: C.wood, textTransform: "uppercase" }}>{k.label}</span>
+                      <Icon size={15} color={k.accent || C.nfBlueLite} />
+                    </div>
+                    <div style={{ fontSize: k.uang ? 16 : 23, fontWeight: 800, marginTop: 4, color: C.ink }}>{k.value}</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, marginTop: 2, color: C.grassDeep }}>{k.delta}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+        )}
+
         <Panel>
           <SectionTitle>🗺️ Peta Divisi — klik untuk detail</SectionTitle>
           <div className="nf-divgrid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
-            {DIVISIONS.map(d => {
+            {divs.map(d => {
               const Icon = d.icon; const has = d.total != null;
               return (
                 <button key={d.id} onClick={() => setOpenDiv(d)} style={{ cursor: "pointer", textAlign: "left", padding: 11, borderRadius: 13, background: "#fff", border: `2px solid ${d.color}`, boxShadow: `0 3px 0 ${d.color}55` }}>
@@ -576,7 +620,7 @@ function MpResellerView({ lihatUang }) {
         </div>
       )}
       <div style={{ marginTop: 12, fontSize: 11.5, color: C.wood, fontStyle: "italic" }}>
-        Tahap 1: tampilan baca saja. Edit & catat dari app → Tahap 3.
+        Tahap 1–2: baca live dari Sheet Resi. Edit & catat → Tahap 3.
       </div>
     </Panel>
   );
