@@ -85,6 +85,10 @@ const api = {
     const r = await apiGet({ action: "stock" });
     return r.ok ? r.stock : [];
   },
+  async getMpList(channel = "all") {
+    const r = await apiGet({ action: "mp_list", role: SESSION.role, channel });
+    return r.ok ? r : { orders: [], summary: null, warnings: [r.error || "Gagal memuat"] };
+  },
 };
 
 /* ============================================================
@@ -111,6 +115,7 @@ const ALL_NAV = [
   { id: "ads", label: "Laporan Iklan", icon: Megaphone },
   { id: "produk", label: "Produk & Stok", icon: Package },
   { id: "media", label: "Media", icon: Camera },
+  { id: "mp", label: "MP & Reseller", icon: ShoppingCart },
 ];
 const TAGCOLOR = { cs: "#3b6ea5", ads: "#8e5bb5", content: "#4f8f4a", marketplace: "#cf7a2c", produksi: "#3b6ea5", packing: "#c79a2c" };
 const FONT = `'Trebuchet MS','Segoe UI',system-ui,sans-serif`;
@@ -315,6 +320,7 @@ function Shell({ user, onLogout }) {
         {page === "cs" && <ReportView divisi="cs" title="Laporan CS" accent="#3b6ea5" />}
         {page === "ads" && <ReportView divisi="ads" title="Laporan Iklan" accent="#8e5bb5" />}
         {page === "media" && <ReportView divisi="media" title="Media & Konten" accent="#4f8f4a" />}
+        {page === "mp" && <MpResellerView lihatUang={user.izin.lihatUang} />}
         {page === "produk" && <ProdukStok />}
 
         <footer style={{ marginTop: 18, textAlign: "center", color: "#fff", background: C.nfBlue, border: `3px solid ${C.parchment}`, borderRadius: 14, padding: "12px 16px", fontWeight: 700, fontSize: 14, boxShadow: "0 4px 0 rgba(0,0,0,.25)" }}>
@@ -487,6 +493,101 @@ function ReportView({ divisi, title, accent }) {
         </div>
       )}
     </Panel>
+  );
+}
+
+function MpResellerView({ lihatUang }) {
+  const [channel, setChannel] = useState("all");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    const r = await api.getMpList(channel);
+    setData(r);
+    setLoading(false);
+  }, [channel]);
+  useEffect(() => { load(); }, [load]);
+
+  const fmtRp = (n) => n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID");
+  const summary = data?.summary;
+  const orders = data?.orders || [];
+  const tabs = [
+    { id: "all", label: "Semua" },
+    { id: "mp", label: "MP Official" },
+    { id: "reseller", label: "Reseller" },
+  ];
+
+  return (
+    <Panel>
+      <SectionTitle>🛒 MP & Reseller — Sheet Resi (baca live)</SectionTitle>
+      {summary && (
+        <div style={{ marginTop: 10, fontSize: 12, color: C.wood }}>
+          Tab aktif: <b>{summary.tabs?.mp}</b> · <b>{summary.tabs?.reseller}</b>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setChannel(t.id)} style={{
+            padding: "7px 12px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12.5,
+            border: `2px solid ${channel === t.id ? C.gold : C.parchmentEdge}`,
+            background: channel === t.id ? C.parchment : "#fff", color: C.ink,
+          }}>{t.label}</button>
+        ))}
+        <button onClick={load} title="Muat ulang" style={{ ...iconBtn, width: 36, height: 36, marginLeft: "auto" }}><RefreshCw size={16} color={C.nfBlue} className={loading ? "nf-spin" : ""} /></button>
+      </div>
+      {summary && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginTop: 12 }}>
+          <MiniStat label="Total pesanan" value={String(summary.total)} color={C.nfBlue} />
+          <MiniStat label="MP Official" value={String(summary.countMp)} color="#cf7a2c" />
+          <MiniStat label="Reseller" value={String(summary.countReseller)} color={C.grassDeep} />
+          {lihatUang && (
+            <>
+              <MiniStat label="Omzet MP" value={fmtRp(summary.omzetMp)} color={C.goldDeep} />
+              <MiniStat label="Omzet Reseller" value={fmtRp(summary.omzetReseller)} color={C.goldDeep} />
+            </>
+          )}
+        </div>
+      )}
+      {data?.warnings?.length > 0 && (
+        <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#fff3cd", border: `1.5px solid ${C.gold}`, fontSize: 12.5, color: C.wood }}>
+          {data.warnings.join(" · ")}
+        </div>
+      )}
+      {loading ? <Spinner /> : orders.length === 0 ? (
+        <div style={{ color: C.wood, fontSize: 13, marginTop: 14 }}>Belum ada order di tab bulan ini, atau tab belum dibuat di sheet Resi.</div>
+      ) : (
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8, maxHeight: 520, overflowY: "auto" }}>
+          {orders.map((o, i) => (
+            <div key={`${o.channel}-${o.invoice}-${i}`} style={{ padding: "11px 13px", borderRadius: 11, background: "#fff", border: `2px solid ${C.parchmentEdge}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 800, fontSize: 13.5 }}>{o.nama || "—"}</div>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: o.channel === "reseller" ? C.grassDeep : "#cf7a2c", padding: "3px 8px", borderRadius: 6 }}>
+                  {o.channel === "reseller" ? "Reseller" : "MP"}
+                </span>
+              </div>
+              <div style={{ fontSize: 11.5, color: C.wood, marginTop: 5, lineHeight: 1.5 }}>
+                <div><b>Tanggal:</b> {o.tanggal || "—"} · <b>Invoice:</b> {o.invoice || "—"}</div>
+                <div><b>Resi:</b> {o.noResi || "—"} · <b>Kota:</b> {o.kota || "—"} · <b>Lokasi:</b> {o.lokasi || "—"}</div>
+                <div><b>Barang:</b> {o.barang || "—"} ({o.jumlah || "—"}) · <b>PIC:</b> {o.pic || "—"}</div>
+                {lihatUang && o.harga != null && <div style={{ fontWeight: 800, color: C.goldDeep, marginTop: 3 }}>{fmtRp(o.harga)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: 12, fontSize: 11.5, color: C.wood, fontStyle: "italic" }}>
+        Tahap 1: tampilan baca saja. Edit & catat dari app → Tahap 3.
+      </div>
+    </Panel>
+  );
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fff", border: `1.5px solid ${C.parchmentEdge}` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.wood, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color, marginTop: 3 }}>{value}</div>
+    </div>
   );
 }
 
