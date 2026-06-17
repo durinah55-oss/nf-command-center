@@ -92,6 +92,9 @@ const api = {
   async mpUpdate({ channel, invoice, pic, catatan }) {
     return apiPost({ action: "mp_update", role: SESSION.role, channel, invoice, pic, catatan });
   },
+  async mpCreate(order) {
+    return apiPost({ action: "mp_create", role: SESSION.role, ...order });
+  },
 };
 
 /* ============================================================
@@ -543,6 +546,22 @@ function ReportView({ divisi, title, accent }) {
   );
 }
 
+function todayResiLabel() {
+  const d = new Date();
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getFullYear()).slice(-2)}`;
+}
+
+function mpOrderEmpty() {
+  return {
+    channel: "mp", tanggal: todayResiLabel(), invoice: "", nama: "", noResi: "", kota: "",
+    telepon: "", service: "", jumlah: "", barang: "", lokasi: "", harga: "", pic: "", catatan: "",
+  };
+}
+
+function FormLabel({ children }) {
+  return <label style={{ fontSize: 12, fontWeight: 700, color: C.wood, display: "block", marginBottom: 4 }}>{children}</label>;
+}
+
 function MpResellerView({ lihatUang }) {
   const [channel, setChannel] = useState("all");
   const [data, setData] = useState(null);
@@ -552,6 +571,10 @@ function MpResellerView({ lihatUang }) {
   const [editCatatan, setEditCatatan] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [newForm, setNewForm] = useState(mpOrderEmpty);
+  const [newErr, setNewErr] = useState("");
+  const [creating, setCreating] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     const r = await api.getMpList(channel);
@@ -586,6 +609,27 @@ function MpResellerView({ lihatUang }) {
     }
   };
 
+  const openNew = () => {
+    setNewForm(mpOrderEmpty());
+    setNewErr("");
+    setShowNew(true);
+  };
+  const closeNew = () => { if (!creating) setShowNew(false); };
+  const setNew = (key, val) => setNewForm(f => ({ ...f, [key]: val }));
+  const saveNew = async () => {
+    setCreating(true);
+    setNewErr("");
+    const r = await api.mpCreate(newForm);
+    setCreating(false);
+    if (r.ok) {
+      setShowNew(false);
+      setChannel(newForm.channel);
+      load();
+    } else {
+      setNewErr(r.error || "Gagal menambah order.");
+    }
+  };
+
   const fmtRp = (n) => n == null ? "—" : "Rp " + Number(n).toLocaleString("id-ID");
   const summary = data?.summary;
   const orders = data?.orders || [];
@@ -613,6 +657,9 @@ function MpResellerView({ lihatUang }) {
           }}>{t.label}</button>
         ))}
         <button onClick={load} title="Muat ulang" style={{ ...iconBtn, width: 36, height: 36, marginLeft: "auto" }}><RefreshCw size={16} color={C.nfBlue} className={loading ? "nf-spin" : ""} /></button>
+        <button onClick={openNew} style={{ padding: "7px 14px", borderRadius: 9, cursor: "pointer", fontWeight: 800, fontSize: 12.5, border: `2px solid ${C.grassDeep}`, background: C.grassDeep, color: "#fff" }}>
+          + Tambah Order
+        </button>
       </div>
       {summary && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginTop: 12 }}>
@@ -661,9 +708,56 @@ function MpResellerView({ lihatUang }) {
         </div>
       )}
       <div style={{ marginTop: 12, fontSize: 11.5, color: C.wood }}>
-        Perubahan PIC & catatan langsung tersimpan ke Sheet Resi (kolom <b>PIC</b> & <b>CATATAN</b>).
+        Order baru, PIC & catatan tersimpan langsung ke Sheet Resi (tab bulan berjalan).
       </div>
     </Panel>
+    {showNew && (
+      <div onClick={closeNew} style={{ position: "fixed", inset: 0, background: "rgba(31,42,36,.6)", display: "grid", placeItems: "center", padding: 16, zIndex: 50, overflowY: "auto" }}>
+        <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "auto" }}>
+          <Panel pad={20} style={{ borderColor: C.grassDeep, maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 12 }}>Tambah order baru</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              {[{ id: "mp", label: "MP Official" }, { id: "reseller", label: "Reseller" }].map(c => (
+                <button key={c.id} onClick={() => setNew("channel", c.id)} style={{
+                  flex: 1, padding: "8px 10px", borderRadius: 9, cursor: "pointer", fontWeight: 700, fontSize: 12,
+                  border: `2px solid ${newForm.channel === c.id ? C.gold : C.parchmentEdge}`,
+                  background: newForm.channel === c.id ? C.parchment : "#fff",
+                }}>{c.label}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div><FormLabel>Tanggal (dd/mm/yy)</FormLabel><Field value={newForm.tanggal} onChange={v => setNew("tanggal", v)} placeholder="17/06/26" onEnter={saveNew} /></div>
+              <div><FormLabel>Invoice *</FormLabel><Field value={newForm.invoice} onChange={v => setNew("invoice", v)} placeholder="Nomor invoice" onEnter={saveNew} /></div>
+              <div><FormLabel>Nama pelanggan *</FormLabel><Field icon={<User size={16} color={C.wood} />} value={newForm.nama} onChange={v => setNew("nama", v)} placeholder="Nama penerima" onEnter={saveNew} /></div>
+              <div><FormLabel>No Resi</FormLabel><Field value={newForm.noResi} onChange={v => setNew("noResi", v)} placeholder="PXID..." onEnter={saveNew} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div><FormLabel>Kota</FormLabel><Field value={newForm.kota} onChange={v => setNew("kota", v)} placeholder="Kota" onEnter={saveNew} /></div>
+                <div><FormLabel>No Telpon</FormLabel><Field value={newForm.telepon} onChange={v => setNew("telepon", v)} placeholder="08..." onEnter={saveNew} /></div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div><FormLabel>Service</FormLabel><Field value={newForm.service} onChange={v => setNew("service", v)} placeholder="SPX COD" onEnter={saveNew} /></div>
+                <div><FormLabel>Jumlah</FormLabel><Field value={newForm.jumlah} onChange={v => setNew("jumlah", v)} placeholder="1" onEnter={saveNew} /></div>
+              </div>
+              <div><FormLabel>Barang *</FormLabel><Field value={newForm.barang} onChange={v => setNew("barang", v)} placeholder="MGC-60" onEnter={saveNew} /></div>
+              <div><FormLabel>Lokasi order</FormLabel><Field value={newForm.lokasi} onChange={v => setNew("lokasi", v)} placeholder="SHP1" onEnter={saveNew} /></div>
+              {lihatUang && (
+                <div><FormLabel>Harga terjual</FormLabel><Field value={newForm.harga} onChange={v => setNew("harga", v)} placeholder="150000" onEnter={saveNew} /></div>
+              )}
+              <div><FormLabel>PIC</FormLabel><Field value={newForm.pic} onChange={v => setNew("pic", v)} placeholder="Nadiyah" onEnter={saveNew} /></div>
+              <div><FormLabel>Catatan</FormLabel><textarea value={newForm.catatan} onChange={e => setNew("catatan", e.target.value)} placeholder="Catatan opsional..."
+                style={{ width: "100%", minHeight: 64, padding: 12, borderRadius: 11, border: `2px solid ${C.parchmentEdge}`, fontFamily: FONT, fontSize: 13, resize: "vertical", boxSizing: "border-box" }} /></div>
+            </div>
+            {newErr && <div style={{ color: C.chili, fontSize: 12.5, marginTop: 10 }}>{newErr}</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={closeNew} disabled={creating} style={{ flex: 1, padding: 11, borderRadius: 11, cursor: "pointer", background: "#fff", border: `2px solid ${C.wood}`, fontWeight: 700 }}>Batal</button>
+              <button onClick={saveNew} disabled={creating} style={{ flex: 1, padding: 11, borderRadius: 11, cursor: creating ? "wait" : "pointer", background: C.grassDeep, color: "#fff", border: "none", fontWeight: 800 }}>
+                {creating ? "Menyimpan..." : "Simpan ke Sheet"}
+              </button>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    )}
     {editOrder && (
       <div onClick={closeEdit} style={{ position: "fixed", inset: 0, background: "rgba(31,42,36,.6)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
         <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 420 }}>

@@ -7,7 +7,7 @@
  *
  * Fungsi: jembatan aman antara web app (React) dan Google Sheet.
  *   - Baca: tasks, kpi, reports, stock, users, mp/reseller (sheet Resi)
- *   - Tulis: centang task, simpan poin, edit PIC/catatan MP (sheet Resi)
+ *   - Tulis: centang task, simpan poin, edit/tambah order MP (sheet Resi)
  *   - Login & role dijaga DI SINI (bukan di frontend)
  *
  * Struktur Sheet yang dibutuhkan (lihat panduan_setup.md):
@@ -35,7 +35,7 @@ const ROLES = {
 };
 
 /* ===========
-   MP & RESELLER — sheet Resi terpisah (Tahap 3: baca + edit PIC/catatan)
+   MP & RESELLER — sheet Resi terpisah (baca + edit + tambah order)
    =========== */
 const RESI_SHEET_ID = "13dxQv1rnoIKbdgNoKpFQ9YsIPNICvkc8aWcuqnDkLgQ";
 const RESI_MONTHS = ["Januari","Februar","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
@@ -162,6 +162,76 @@ function updateMpOrder_(body) {
     };
   }
   return { ok: false, error: "Invoice tidak ditemukan di tab " + tabName };
+}
+
+function parseTanggalForSheet_(s) {
+  if (!s) return new Date();
+  const parts = String(s).trim().split("/");
+  if (parts.length !== 3) return new Date();
+  let dd = parseInt(parts[0], 10);
+  let mm = parseInt(parts[1], 10) - 1;
+  let yy = parseInt(parts[2], 10);
+  if (yy < 100) yy += 2000;
+  if (isNaN(dd) || isNaN(mm) || isNaN(yy)) return new Date();
+  return new Date(yy, mm, dd);
+}
+
+function setResiCell_(sh, rowNum, colIdx, val) {
+  if (val === undefined || val === null || val === "") return;
+  sh.getRange(rowNum, colIdx + 1).setValue(val);
+}
+
+function createMpOrder_(body) {
+  if (!mpAllowed_(body.role)) return { ok: false, error: "Tidak punya akses MP/Reseller." };
+  const channel = String(body.channel || "mp");
+  if (channel !== "mp" && channel !== "reseller") {
+    return { ok: false, error: "Channel harus mp atau reseller." };
+  }
+  const invoice = String(body.invoice || "").trim();
+  const nama = String(body.nama || "").trim();
+  const barang = String(body.barang || "").trim();
+  if (!invoice) return { ok: false, error: "Invoice wajib diisi." };
+  if (!nama) return { ok: false, error: "Nama pelanggan wajib diisi." };
+  if (!barang) return { ok: false, error: "Barang wajib diisi." };
+
+  const tabs = getResiTabNames();
+  const tabName = channel === "mp" ? tabs.mp : tabs.reseller;
+  const ss = SpreadsheetApp.openById(RESI_SHEET_ID);
+  const sh = ss.getSheetByName(tabName);
+  if (!sh) return { ok: false, error: "Tab tidak ditemukan: " + tabName + ". Buat tab dulu di Sheet Resi." };
+
+  const cols = getResiColMap_(sh);
+  const data = sh.getDataRange().getValues();
+  for (let r = 1; r < data.length; r++) {
+    if (String(data[r][cols.invoice] || "").trim() === invoice) {
+      return { ok: false, error: "Invoice sudah ada di " + tabName + "." };
+    }
+  }
+
+  const rowNum = Math.max(sh.getLastRow(), 1) + 1;
+  const tanggal = body.tanggal ? String(body.tanggal).trim() : todayResi_();
+  setResiCell_(sh, rowNum, 1, parseTanggalForSheet_(tanggal));
+  setResiCell_(sh, rowNum, cols.invoice, invoice);
+  setResiCell_(sh, rowNum, 3, nama);
+  setResiCell_(sh, rowNum, 4, String(body.noResi || ""));
+  setResiCell_(sh, rowNum, 5, String(body.kota || ""));
+  setResiCell_(sh, rowNum, 6, String(body.telepon || ""));
+  setResiCell_(sh, rowNum, 8, String(body.service || ""));
+  setResiCell_(sh, rowNum, 9, body.jumlah || "");
+  setResiCell_(sh, rowNum, 10, barang);
+  setResiCell_(sh, rowNum, 11, String(body.lokasi || ""));
+  if (body.harga !== undefined && body.harga !== null && String(body.harga).trim() !== "") {
+    setResiCell_(sh, rowNum, 12, parseHarga_(body.harga));
+  }
+  if (body.pic) setResiCell_(sh, rowNum, cols.pic, String(body.pic));
+  if (body.catatan) {
+    if (String(sh.getRange(1, cols.catatan + 1).getValue()).trim() === "") {
+      sh.getRange(1, cols.catatan + 1).setValue("CATATAN");
+    }
+    setResiCell_(sh, rowNum, cols.catatan, String(body.catatan));
+  }
+
+  return { ok: true, invoice: invoice, channel: channel, tab: tabName, row: rowNum };
 }
 
 function buildMpSummary_(role) {
@@ -337,6 +407,10 @@ function doPost(e) {
 
     if (body.action === "mp_update") {
       return json(updateMpOrder_(body));
+    }
+
+    if (body.action === "mp_create") {
+      return json(createMpOrder_(body));
     }
 
     return json({ ok: false, error: "Action tidak dikenal" });
